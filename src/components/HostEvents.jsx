@@ -1,5 +1,6 @@
 // src/components/HostEvents.jsx
 import { useEffect, useMemo, useState } from "react";
+
 import FilterDropdown from "./FilterDropdown";
 import AddEventModal from "./AddEventModal";
 
@@ -21,7 +22,7 @@ function getHostIdFromEvent(e) {
   );
 }
 
-export default function HostEvents() {
+export default function HostEvents({ onEditEvent }) {
   const [tab, setTab] = useState("my"); // "my" | "all"
   const [q, setQ] = useState("");
 
@@ -46,11 +47,16 @@ export default function HostEvents() {
 
   const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "";
 
-function toImageSrc(url) {
-  if (!url) return "";
-  if (url.startsWith("http")) return url;
-  return `${API_ORIGIN}${url}`; 
-}
+
+  function toImageSrc(url) {
+    if (!url) return "";
+    if (url.startsWith("http")) return url;
+  
+    const origin = API_ORIGIN.replace(/\/+$/, "");
+    const path = url.startsWith("/") ? url : `/${url}`;
+  
+    return origin ? `${origin}${path}` : path;
+  }
 
   // cookie session auth get current user + prefs (no localStorage, no Bearer header)
   useEffect(() => {
@@ -297,47 +303,68 @@ function toImageSrc(url) {
           <div style={{ opacity: 0.9, padding: 12, color: "#ff7ad9" }}>{eventsError}</div>
         ) : null}
 
-        <div style={styles.list}>
-          {shown.map((e) => (
-            <div key={e.id} style={styles.card}>
-              <div style={styles.cardHeaderIcons}>
-                <div style={styles.leftIcon} title="Accessibility">
-                  ♿
-                </div>
-                <div style={styles.rightIcon} title="Edit">
-                  ✎
-                </div>
-              </div>
+<div style={styles.list}>
+  {shown.map((e) => {
+    const myId = Number(me?.id);
+    const isOwner = Number(getHostIdFromEvent(e)) === myId;
 
-              <div style={styles.cardBody}>
-                <div style={styles.cardImageWrap}>
-                  {e.imageUrl ? (
-                    <img src={toImageSrc(e.imageUrl)} alt={e.title} style={styles.cardImage} />
-                  ) : (
-                    <div style={styles.cardImageFallback}>No photo</div>
-                  )}
-                </div>
+    return (
+      <div key={e.id} style={styles.card}>
+        <div style={styles.cardHeaderIcons}>
+          <div style={styles.leftIcon} title="Accessibility">
+            ♿
+          </div>
 
-                <div style={styles.cardBottom}>
-                  <div>
-                    {e.expired ? <div style={styles.expired}>Expired</div> : null}
-                    <div style={styles.eventTitle}>{e.title}</div>
-                    <div style={styles.eventMeta}>
-                      {e.venue ? `${e.venue}, ` : ""}
-                      {e.city}
-                    </div>
-                    <div style={styles.eventMeta}>{e.dateLabel}</div>
-                    <div style={styles.eventMeta}>{e.timeLabel}</div>
-                  </div>
-
-                  <div style={styles.eventDesc}>{e.description}</div>
-                </div>
-              </div>
+          {isOwner ? (
+            <div
+              style={styles.rightIcon}
+              title="Edit"
+              onClick={() => onEditEvent(e.id)}
+            >
+              ✎
             </div>
-          ))}
-
-          {!shown.length && !loadingEvents ? <div style={styles.empty}>No events match your filters yet.</div> : null}
+          ) : (
+            <div style={{ width: 18 }} />
+          )}
         </div>
+
+        <div style={styles.cardBody}>
+          <div style={styles.cardImageWrap}>
+            {e.imageUrl ? (
+              <img
+                src={toImageSrc(e.imageUrl)}
+                alt={e.title}
+                style={styles.cardImage}
+              />
+            ) : (
+              <div style={styles.cardImageFallback}>No photo</div>
+            )}
+          </div>
+
+          <div style={styles.cardBottom}>
+            <div>
+              {e.expired ? <div style={styles.expired}>Expired</div> : null}
+              <div style={styles.eventTitle}>{e.title}</div>
+              <div style={styles.eventMeta}>
+                {e.venue ? `${e.venue}, ` : ""}
+                {e.city}
+              </div>
+              <div style={styles.eventMeta}>{e.dateLabel}</div>
+              <div style={styles.eventMeta}>{e.timeLabel}</div>
+            </div>
+
+            <div style={styles.eventDesc}>{e.description}</div>
+          </div>
+        </div>
+      </div>
+    );
+  })}
+
+  {!shown.length && !loadingEvents ? (
+    <div style={styles.empty}>No events match your filters yet.</div>
+  ) : null}
+</div>
+
 
         <div style={styles.bottomNav}>
           <div style={{ ...styles.navIcon, color: "#F200FF" }}>⌂</div>
@@ -465,6 +492,7 @@ const styles = {
     fontSize: 12,
   },
   cardBottom: { display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: 12, paddingTop: 10, alignItems: "end" },
+  cardBody: { display: "grid", gap: 10 },
   expired: { color: "#ff2b2b", fontFamily: '"Anton", sans-serif', letterSpacing: 0.6, marginBottom: 6 },
   eventTitle: { fontFamily: '"Anton", sans-serif', fontSize: 22, marginBottom: 4 },
   eventMeta: { opacity: 0.65, fontSize: 12, lineHeight: 1.4 },

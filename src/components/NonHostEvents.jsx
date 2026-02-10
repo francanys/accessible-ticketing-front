@@ -25,11 +25,15 @@ export default function NonHostEvents() {
 
   const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "";
 
-function toImageSrc(url) {
-  if (!url) return "";
-  if (url.startsWith("http")) return url;
-  return `${API_ORIGIN}${url}`;
-}
+  function toImageSrc(url) {
+    if (!url) return "";
+    if (url.startsWith("http")) return url;
+  
+    const origin = API_ORIGIN.replace(/\/+$/, "");
+    const path = url.startsWith("/") ? url : `/${url}`;
+  
+    return origin ? `${origin}${path}` : path;
+  }
 
 
   //cookie session auth load preferences without localStorage/token/userId
