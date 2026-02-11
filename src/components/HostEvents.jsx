@@ -3,9 +3,32 @@ import { useEffect, useMemo, useState } from "react";
 
 import FilterDropdown from "./FilterDropdown";
 import AddEventModal from "./AddEventModal";
+import { FaWheelchair } from "react-icons/fa";
 
 function norm(s) {
   return String(s || "").trim().toLowerCase();
+}
+
+function toDateText(v) {
+  if (!v) return "";
+  //supports "2026-02-12T00:00:00.000Z" or "2026-02-12"
+  const d = new Date(v);
+  if (!Number.isNaN(d.getTime())) {
+    return d.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" });
+  }
+  // allback: "YYYY-MM-DD" - "DD/MM/YYYY"
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+    const [yyyy, mm, dd] = v.split("-");
+    return `${dd}/${mm}/${yyyy}`;
+  }
+  return String(v);
+}
+
+function toTimeText(v) {
+  if (!v) return "";
+  // "22:00:00" -> "22:00"
+  if (/^\d{2}:\d{2}:\d{2}$/.test(v)) return v.slice(0, 5);
+  return String(v);
 }
 
 // tries common backend field names for host user id
@@ -45,6 +68,9 @@ export default function HostEvents({ onEditEvent }) {
   const [dateFilter, setDateFilter] = useState("any"); // any | upcoming | expired
   const [areaFilter, setAreaFilter] = useState("any");
 
+  const [favIds, setFavIds] = useState(() => new Set());
+  const [favLoading, setFavLoading] = useState(false);
+
   const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "";
 
 
@@ -76,6 +102,20 @@ export default function HostEvents({ onEditEvent }) {
         if (!alive) return;
 
         setMe(meData.user);
+
+        setFavLoading(true);
+try {
+  const fRes = await fetch("/api/favorites", { credentials: "include" });
+  const fData = await fRes.json().catch(() => ({}));
+  if (fRes.ok && fData.ok) {
+    setFavIds(new Set((fData.eventIds || []).map(Number)));
+  } else {
+    setFavIds(new Set());
+  }
+} finally {
+  setFavLoading(false);
+}
+
 
         // 2) my prefs
         const [iRes, aRes] = await Promise.all([
@@ -233,6 +273,62 @@ export default function HostEvents({ onEditEvent }) {
     setEvents((prev) => [data.event, ...(prev || [])]);
   };
 
+  //state for accessibility
+const [accessTip, setAccessTip] = useState({
+  open: false,
+  eventId: null,
+  text: "",
+});
+
+const openAccessTip = (event) => {
+  const list = Array.isArray(event?.accessibility) ? event.accessibility : [];
+  const clean = list.filter(Boolean).filter((x) => x !== "None");
+
+  const text = clean.length ? clean.join(", ") : "No accessibility info";
+
+  setAccessTip({
+    open: true,
+    eventId: event.id,
+    text,
+  });
+};
+
+const closeAccessTip = () => {
+  setAccessTip({ open: false, eventId: null, text: "" });
+};
+
+const toggleFav = async (eventId) => {
+  const id = Number(eventId);
+  if (!id) return;
+
+  // optimistic UI
+  const wasFav = favIds.has(id);
+  setFavIds((prev) => {
+    const next = new Set(prev);
+    if (wasFav) next.delete(id);
+    else next.add(id);
+    return next;
+  });
+
+  try {
+    const res = await fetch(`/api/favorites/${id}`, {
+      method: wasFav ? "DELETE" : "POST",
+      credentials: "include",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || "Failed");
+  } catch (e) {
+    // rollback if request fails
+    setFavIds((prev) => {
+      const next = new Set(prev);
+      if (wasFav) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+};
+
+
   return (
     <div style={styles.page}>
       <div style={styles.phone}>
@@ -309,23 +405,64 @@ export default function HostEvents({ onEditEvent }) {
     const isOwner = Number(getHostIdFromEvent(e)) === myId;
 
     return (
-      <div key={e.id} style={styles.card}>
+      <div key={e.id} style={styles.card} onClick={closeAccessTip}>
         <div style={styles.cardHeaderIcons}>
-          <div style={styles.leftIcon} title="Accessibility">
-            ♿
-          </div>
+        <div style={{ position: "relative" }}>
+        <button
+  type="button"
+  title="Accessibility" // hover label
+  aria-label="Accessibility"
+  onClick={(ev) => {
+    ev.stopPropagation(); // don’t trigger card click close
+    if (accessTip.open && accessTip.eventId === e.id) closeAccessTip();
+    else openAccessTip(e); //click shows backend list
+  }}
+  style={styles.accessBtn}
+>
+  <FaWheelchair />
+</button>
 
-          {isOwner ? (
-            <div
-              style={styles.rightIcon}
-              title="Edit"
-              onClick={() => onEditEvent(e.id)}
-            >
-              ✎
-            </div>
-          ) : (
-            <div style={{ width: 18 }} />
-          )}
+
+
+  {accessTip.open && accessTip.eventId === e.id ? (
+    <div style={styles.accessTip} role="tooltip">
+      {accessTip.text}
+    </div>
+  ) : null}
+</div>
+
+
+{isOwner ? (
+  <div
+    style={styles.rightIcon}
+    title="Edit"
+    onClick={(ev) => {
+      ev.stopPropagation();
+      onEditEvent(e.id);
+    }}
+  >
+    ✎
+  </div>
+) : (
+  <button
+    type="button"
+    title="Favourite"
+    aria-label="Favourite"
+    onClick={(ev) => {
+      ev.stopPropagation();
+      toggleFav(e.id);
+    }}
+    style={{
+      ...styles.heartBtn,
+      color: favIds.has(Number(e.id)) ? "#F200FF" : "rgba(255,255,255,0.55)",
+    }}
+  >
+    ♥
+  </button>
+)}
+
+
+
         </div>
 
         <div style={styles.cardBody}>
@@ -345,6 +482,24 @@ export default function HostEvents({ onEditEvent }) {
             <div>
               {e.expired ? <div style={styles.expired}>Expired</div> : null}
               <div style={styles.eventTitle}>{e.title}</div>
+
+{/*date, time */}
+{(e.eventDate || e.eventTime) ? (
+  <div style={styles.eventDateTime}>
+    {toDateText(e.eventDate)}
+    {e.eventDate && e.eventTime ? " • " : ""}
+    {toTimeText(e.eventTime)}
+  </div>
+) : null}
+
+<div style={styles.eventMeta}>
+  {e.venue ? `${e.venue}, ` : ""}
+  {e.city}
+</div>
+
+{e.dateLabel ? <div style={styles.eventMeta}>{e.dateLabel}</div> : null}
+{e.timeLabel ? <div style={styles.eventMeta}>{e.timeLabel}</div> : null}
+
               <div style={styles.eventMeta}>
                 {e.venue ? `${e.venue}, ` : ""}
                 {e.city}
@@ -511,4 +666,49 @@ const styles = {
     alignItems: "center",
   },
   navIcon: { fontSize: 22, opacity: 0.9 },
+  accessBtn: {
+    background: "transparent",
+    border: "none",
+    padding: 0,
+    margin: 0,
+    cursor: "pointer",
+    color: "white",
+    fontSize: 18,
+    opacity: 0.85,
+    lineHeight: 1,
+  },
+  
+  accessTip: {
+    position: "absolute",
+    top: 24,
+    left: 0,
+    zIndex: 50,
+    minWidth: 160,
+    maxWidth: 260,
+    padding: "8px 10px",
+    background: "rgba(0,0,0,0.92)",
+    border: "1px solid rgba(242,0,255,0.35)",
+    color: "white",
+    fontSize: 12,
+    lineHeight: 1.4,
+    boxShadow: "0 10px 30px rgba(0,0,0,0.45)",
+    whiteSpace: "normal",
+  },
+  eventDateTime: {
+    opacity: 0.85,
+    fontSize: 13,
+    lineHeight: 1.3,
+    marginBottom: 6,
+  },
+
+  heartBtn: {
+    background: "transparent",
+    border: "none",
+    padding: 0,
+    margin: 0,
+    cursor: "pointer",
+    fontSize: 18,
+    lineHeight: 1,
+    opacity: 0.95,
+  },
 };

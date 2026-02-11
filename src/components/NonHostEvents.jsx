@@ -1,6 +1,6 @@
-// src/components/NonHostEvents.jsx
 import { useEffect, useMemo, useState } from "react";
 import FilterDropdown from "./FilterDropdown";
+import { FaWheelchair } from "react-icons/fa";
 
 function norm(s) {
   return String(s || "").trim().toLowerCase();
@@ -22,6 +22,8 @@ export default function NonHostEvents() {
   const [events, setEvents] = useState([]);
   const [loadingEvents, setLoadingEvents] = useState(true);
   const [eventsError, setEventsError] = useState("");
+
+  const [favIds, setFavIds] = useState(() => new Set());
 
   const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "";
 
@@ -51,6 +53,14 @@ export default function NonHostEvents() {
         if (!meRes.ok || !meData.ok) throw new Error(meData.error || "Please log in again.");
         if (!alive) return;
 
+        try {
+          const fRes = await fetch("/api/favorites", { credentials: "include" });
+          const fData = await fRes.json().catch(() => ({}));
+          if (fRes.ok && fData.ok) setFavIds(new Set((fData.eventIds || []).map(Number)));
+        } catch {
+          setFavIds(new Set());
+        }
+        
         const [iRes, aRes] = await Promise.all([
           fetch("/api/interests", { credentials: "include" }),
           fetch("/api/accessibility", { credentials: "include" }),
@@ -82,10 +92,10 @@ export default function NonHostEvents() {
     };
   }, []);
 
-  /**
-   * ✅ cookie session auth:
-   * Call /api/events/feed with credentials include (no Bearer header).
-   * Backend should read req.user.userId for personalization.
+  /*
+   * cookie session auth:
+   * Call /api/events/feed with credentials include (no bearer header)
+   * Backend should read req.user.userId for personalization
    */
   useEffect(() => {
     const t = setTimeout(async () => {
@@ -152,9 +162,64 @@ export default function NonHostEvents() {
     []
   );
 
-  // backend already filters + orders by matchScore, so we just show returned list
+  //backend already filters + orders by matchScore
   const shown = events;
 
+  //state for accessibility
+  const [accessTip, setAccessTip] = useState({
+    open: false,
+    eventId: null,
+    text: "",
+  });
+  
+  const openAccessTip = (event) => {
+    const list = Array.isArray(event?.accessibility) ? event.accessibility : [];
+    const clean = list.filter(Boolean).filter((x) => x !== "None");
+  
+    const text = clean.length ? clean.join(", ") : "No accessibility info";
+  
+    setAccessTip({
+      open: true,
+      eventId: event.id,
+      text,
+    });
+  };
+  
+  const closeAccessTip = () => {
+    setAccessTip({ open: false, eventId: null, text: "" });
+  };
+  
+  const toggleFav = async (eventId) => {
+    const id = Number(eventId);
+    if (!id) return;
+  
+    const wasFav = favIds.has(id);
+  
+    setFavIds((prev) => {
+      const next = new Set(prev);
+      if (wasFav) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  
+    try {
+      const res = await fetch(`/api/favorites/${id}`, {
+        method: wasFav ? "DELETE" : "POST",
+        credentials: "include",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error || "Failed");
+    } catch {
+      setFavIds((prev) => {
+        const next = new Set(prev);
+        if (wasFav) next.add(id);
+        else next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  
   return (
     <div style={styles.page}>
       <div style={styles.phone}>
@@ -189,11 +254,46 @@ export default function NonHostEvents() {
 
         <div style={styles.list}>
           {shown.map((e) => (
-            <div key={e.id} style={styles.card}>
+            <div key={e.id} style={styles.card} onClick={closeAccessTip}>
               <div style={styles.cardHeaderIcons}>
-                <div style={styles.leftIcon} title="Accessibility">
-                  ♿
-                </div>
+              <div style={{ position: "relative" }}>
+<button
+  type="button"
+  title="Accessibility" // ✅ hover label
+  aria-label="Accessibility"
+  onClick={(ev) => {
+    ev.stopPropagation(); // ✅ don’t trigger card click close
+    if (accessTip.open && accessTip.eventId === e.id) closeAccessTip();
+    else openAccessTip(e); // ✅ click shows backend list
+  }}
+  style={styles.accessBtn}
+>
+  <FaWheelchair />
+</button>
+
+
+
+  {accessTip.open && accessTip.eventId === e.id ? (
+    <div style={styles.accessTip} role="tooltip">
+      {accessTip.text}
+    </div>
+  ) : null}
+</div>
+<button
+    type="button"
+    title="Favourite"
+    aria-label="Favourite"
+    onClick={(ev) => {
+      ev.stopPropagation();
+      toggleFav(e.id);
+    }}
+    style={{
+      ...styles.heartBtn,
+      color: favIds.has(Number(e.id)) ? "#F200FF" : "rgba(255,255,255,0.55)",
+    }}
+  >
+    ♥
+  </button>
               </div>
 
               <div style={styles.cardBody}>
@@ -365,4 +465,43 @@ const styles = {
     alignItems: "center",
   },
   navIcon: { fontSize: 22, opacity: 0.9 },
+  accessBtn: {
+    background: "transparent",
+    border: "none",
+    padding: 0,
+    margin: 0,
+    cursor: "pointer",
+    color: "white",
+    fontSize: 18,
+    opacity: 0.85,
+    lineHeight: 1,
+  },
+  
+  accessTip: {
+    position: "absolute",
+    top: 24,
+    left: 0,
+    zIndex: 50,
+    minWidth: 160,
+    maxWidth: 260,
+    padding: "8px 10px",
+    background: "rgba(0,0,0,0.92)",
+    border: "1px solid rgba(242,0,255,0.35)",
+    color: "white",
+    fontSize: 12,
+    lineHeight: 1.4,
+    boxShadow: "0 10px 30px rgba(0,0,0,0.45)",
+    whiteSpace: "normal",
+  },
+  heartBtn: {
+    background: "transparent",
+    border: "none",
+    padding: 0,
+    margin: 0,
+    cursor: "pointer",
+    fontSize: 18,
+    lineHeight: 1,
+    opacity: 0.95,
+  },
+  
 };

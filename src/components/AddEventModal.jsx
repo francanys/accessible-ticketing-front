@@ -1,4 +1,5 @@
 import React, { Component } from "react";
+import { FaWheelchair } from "react-icons/fa";
 
 const ACCESS_OPTIONS = [
   "Step-free access",
@@ -21,19 +22,28 @@ export default class AddEventModal extends Component {
     super(props);
 
     this.state = {
-      photos: [], // File[]
-      photoPreviews: [], // string[]
+      photos: [], //File[]
+      photoPreviews: [], //string[]
       title: "",
       description: "",
       accessibility: [],
       location: "",
+      locationQuery: "",  
+      locationResults: [], 
+      locationLoading: false,
+      locationOpen: false,
       saving: false,
       error: "",
+      eventDate: "",
+      eventTime: "",
+
+
     };
   }
 
   componentWillUnmount() {
     // cleanup object URLs
+    clearTimeout(this._locTimer);
     (this.state.photoPreviews || []).forEach((u) => {
       try {
         URL.revokeObjectURL(u);
@@ -55,6 +65,12 @@ export default class AddEventModal extends Component {
       description: "",
       accessibility: [],
       location: "",
+      locationQuery: "",
+      locationResults: [],
+      locationLoading: false,
+      locationOpen: false,
+      eventDate: "",
+      eventTime: "",
       saving: false,
       error: "",
     });
@@ -102,11 +118,16 @@ export default class AddEventModal extends Component {
     const title = norm(this.state.title);
     const description = norm(this.state.description);
     const location = norm(this.state.location);
+    const eventDate = norm(this.state.eventDate);
+    const eventTime = norm(this.state.eventTime);
 
     if (!title) return "Name is required.";
     if (!description) return "Description is required.";
     if (!location) return "Location is required.";
+    if (!eventDate) return "Date is required.";
+    if (!eventTime) return "Time is required.";
     return "";
+    
   };
 
   save = async () => {
@@ -124,6 +145,9 @@ export default class AddEventModal extends Component {
     fd.append("title", title);
     fd.append("description", description);
     fd.append("locationText", location);
+    fd.append("eventDate", this.state.eventDate);
+    fd.append("eventTime", this.state.eventTime);
+
     accessibility.forEach((a) => fd.append("accessibility[]", a));
     photos.forEach((p) => fd.append("photos", p));
   
@@ -138,6 +162,80 @@ export default class AddEventModal extends Component {
   
     this.setState({ saving: false });
   };
+
+  fetchLocations = async (q) => {
+    const query = norm(q);
+    if (query.length < 3) {
+      this.setState({ locationResults: [], locationOpen: false });
+      return;
+    }
+  
+    this.setState({ locationLoading: true });
+  
+    try {
+      // Nominatim (OpenStreetMap) — free, no key (good for prototyping)
+      const url =
+        `https://nominatim.openstreetmap.org/search?` +
+        new URLSearchParams({
+          q: query,
+          format: "json",
+          addressdetails: "1",
+          limit: "6",
+          countrycodes: "gb", // UK only (remove if you want global)
+        }).toString();
+  
+      const res = await fetch(url, {
+        headers: {
+          // Nominatim prefers a real UA / referer — browser will set UA.
+          "Accept": "application/json",
+        },
+      });
+  
+      const data = await res.json().catch(() => []);
+      const results = Array.isArray(data)
+        ? data.map((r) => ({
+            id: r.place_id,
+            label: r.display_name, // full address
+          }))
+        : [];
+  
+      this.setState({
+        locationResults: results,
+        locationOpen: true,
+      });
+    } catch {
+      this.setState({ locationResults: [], locationOpen: false });
+    } finally {
+      this.setState({ locationLoading: false });
+    }
+  };
+  
+  onLocationChange = (e) => {
+    const v = e.target.value;
+    this.setState(
+      { locationQuery: v, location: v, error: "", locationOpen: true },  
+      () => {
+        clearTimeout(this._locTimer);
+        this._locTimer = setTimeout(() => this.fetchLocations(v), 250);
+      }
+    );
+  };
+  
+  selectLocation = (item) => {
+    // store the full address in `location` (what you POST to backend)
+    this.setState({
+      location: item.label,
+      locationQuery: item.label,
+      locationOpen: false,
+      locationResults: [],
+      error: "",
+    });
+  };
+  
+  closeLocationDropdown = () => {
+    this.setState({ locationOpen: false });
+  };
+  
   
 
   render() {
@@ -199,13 +297,28 @@ export default class AddEventModal extends Component {
               style={styles.textarea}
               rows={4}
             />
+
+<input
+  type="date"
+  value={this.state.eventDate}
+  onChange={(e) => this.setState({ eventDate: e.target.value, error: "" })}
+  style={styles.input}
+/>
+
+<input
+  type="time"
+  value={this.state.eventTime}
+  onChange={(e) => this.setState({ eventTime: e.target.value, error: "" })}
+  style={styles.input}
+/>
+
           </div>
 
           {/* accessibility */}
           <div style={styles.section}>
             <div style={styles.sectionTitleRow}>
               <div style={styles.sectionIcon} aria-hidden>
-                ♿
+              <FaWheelchair />
               </div>
               <div style={styles.sectionTitle}>Accessibility</div>
             </div>
@@ -237,16 +350,43 @@ export default class AddEventModal extends Component {
             </div>
           </div>
 
-          {/* location */}
-          <div style={styles.section}>
-            <div style={styles.sectionTitle}>Location</div>
-            <input
-              value={location}
-              onChange={(e) => this.setState({ location: e.target.value, error: "" })}
-              placeholder="Postcode"
-              style={styles.locationInput}
-            />
-          </div>
+{/* location */}
+<div style={styles.section}>
+  <div style={styles.sectionTitle}>Location</div>
+
+  <div style={styles.locationWrap}>
+    <input
+      value={this.state.locationQuery}
+      onChange={this.onLocationChange}
+      onFocus={() => this.setState({ locationOpen: true })}
+      onBlur={() => setTimeout(this.closeLocationDropdown, 120)} // allow click
+      placeholder="Start typing address / postcode"
+      style={styles.locationInputWide}
+      autoComplete="off"
+    />
+
+    {this.state.locationLoading ? (
+      <div style={styles.locationHint}>Searching…</div>
+    ) : null}
+
+    {this.state.locationOpen && this.state.locationResults.length ? (
+      <div style={styles.locationDropdown}>
+        {this.state.locationResults.map((r) => (
+          <button
+            key={r.id}
+            type="button"
+            onMouseDown={(e) => e.preventDefault()} 
+            onClick={() => this.selectLocation(r)}
+            style={styles.locationItem}
+          >
+            {r.label}
+          </button>
+        ))}
+      </div>
+    ) : null}
+  </div>
+</div>
+
 
           {/* error */}
           {error ? <div style={styles.error}>{error}</div> : null}
@@ -411,13 +551,64 @@ const styles = {
   saveRow: { marginTop: 18, display: "flex", justifyContent: "center", paddingBottom: 6 },
   saveBtn: {
     width: 160,
-    height: 44,
+    height: 56,  
     border: "1px solid rgba(242,0,255,0.55)",
     background: "rgba(60,60,60,0.65)",
     color: "white",
     fontFamily: '"Anton", sans-serif',
-    fontSize: 26,
+    fontSize: 24,               
     letterSpacing: 0.6,
     cursor: "pointer",
+    display: "flex",     
+    alignItems: "center",
+    justifyContent: "center",
+    lineHeight: 1,       
+    padding: 0,
   },
+  
+  locationWrap: { position: "relative", width: "100%" },
+
+locationInputWide: {
+  width: "100%",
+  height: 44,
+  borderRadius: 22,
+  border: "1px solid rgba(255,255,255,0.08)",
+  background: "rgba(240, 240, 255, 0.9)",
+  outline: "none",
+  padding: "0 14px",
+  fontSize: 14,
+  boxSizing: "border-box",
+},
+
+locationHint: {
+  marginTop: 6,
+  fontSize: 12,
+  opacity: 0.7,
+},
+
+locationDropdown: {
+  position: "absolute",
+  left: 0,
+  right: 0,
+  top: 50,
+  zIndex: 60,
+  background: "rgba(0,0,0,0.95)",
+  border: "1px solid rgba(242,0,255,0.35)",
+  maxHeight: 220,
+  overflowY: "auto",
+},
+
+locationItem: {
+  width: "100%",
+  textAlign: "left",
+  padding: "10px 12px",
+  background: "transparent",
+  border: "none",
+  color: "white",
+  fontSize: 12,
+  cursor: "pointer",
+  opacity: 0.92,
+  borderBottom: "1px solid rgba(255,255,255,0.06)",
+},
+
 };
