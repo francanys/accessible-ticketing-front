@@ -13,6 +13,21 @@ const ACCESS_OPTIONS = [
   "None",
 ];
 
+const INTEREST_OPTIONS = [
+  "Music",
+  "Concerts",
+  "Art",
+  "Fashion",
+  "Film",
+  "Theatre",
+  "Comedy",
+  "Sports",
+  "Food",
+  "Tech",
+  "Dance",
+  "Wellness",
+];
+
 function norm(s) {
   return String(s || "").trim();
 }
@@ -27,6 +42,7 @@ export default class AddEventModal extends Component {
       title: "",
       description: "",
       accessibility: [],
+      categories: [],
       location: "",
       locationQuery: "",  
       locationResults: [], 
@@ -114,21 +130,34 @@ export default class AddEventModal extends Component {
     });
   };
 
+  toggleCategory = (label) => {
+    this.setState((prev) => {
+      const cur = prev.categories || [];
+      const has = cur.includes(label);
+      const next = has ? cur.filter((x) => x !== label) : [...cur, label];
+      return { categories: next };
+    });
+  };
+  
   validate = () => {
     const title = norm(this.state.title);
     const description = norm(this.state.description);
     const location = norm(this.state.location);
     const eventDate = norm(this.state.eventDate);
     const eventTime = norm(this.state.eventTime);
-
+  
     if (!title) return "Name is required.";
     if (!description) return "Description is required.";
     if (!location) return "Location is required.";
     if (!eventDate) return "Date is required.";
     if (!eventTime) return "Time is required.";
+  
+    const categories = this.state.categories || [];
+    if (!categories.length) return "Pick at least one interest.";
+  
     return "";
-    
   };
+  
 
   save = async () => {
     const msg = this.validate();
@@ -139,7 +168,7 @@ export default class AddEventModal extends Component {
   
     this.setState({ saving: true, error: "" });
   
-    const { photos, title, description, accessibility, location } = this.state;
+    const { photos, title, description, accessibility, categories, location } = this.state;
   
     const fd = new FormData();
     fd.append("title", title);
@@ -149,6 +178,7 @@ export default class AddEventModal extends Component {
     fd.append("eventTime", this.state.eventTime);
 
     accessibility.forEach((a) => fd.append("accessibility[]", a));
+    categories.forEach((c) => fd.append("categories[]", c));
     photos.forEach((p) => fd.append("photos", p));
   
     try {
@@ -349,6 +379,38 @@ export default class AddEventModal extends Component {
               })}
             </div>
           </div>
+
+          {/* interests */}
+<div style={styles.section}>
+  <div style={styles.sectionTitle}>Interests</div>
+
+  <div style={styles.accessGrid}>
+    {INTEREST_OPTIONS.map((opt) => {
+      const checked = (this.state.categories || []).includes(opt);
+      return (
+        <label key={opt} style={styles.accessItem}>
+          <span
+            style={{
+              ...styles.checkbox,
+              ...(checked ? styles.checkboxOn : styles.checkboxOff),
+            }}
+            onClick={() => this.toggleCategory(opt)}
+            role="checkbox"
+            aria-checked={checked}
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") this.toggleCategory(opt);
+            }}
+          >
+            {checked ? "✓" : ""}
+          </span>
+          <span style={styles.accessLabel}>{opt}</span>
+        </label>
+      );
+    })}
+  </div>
+</div>
+
 
 {/* location */}
 <div style={styles.section}>

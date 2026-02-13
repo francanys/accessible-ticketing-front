@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import FilterDropdown from "./FilterDropdown";
 import AddEventModal from "./AddEventModal";
 import { FaWheelchair } from "react-icons/fa";
+import BottomMenu from "./BottomNav";
 
 function norm(s) {
   return String(s || "").trim().toLowerCase();
@@ -45,7 +46,7 @@ function getHostIdFromEvent(e) {
   );
 }
 
-export default function HostEvents({ onEditEvent }) {
+export default function HostEvents({ onEditEvent, screen, setScreen, isHost }) {
   const [tab, setTab] = useState("my"); // "my" | "all"
   const [q, setQ] = useState("");
 
@@ -56,7 +57,9 @@ export default function HostEvents({ onEditEvent }) {
   const [loadingPrefs, setLoadingPrefs] = useState(true);
   const [prefsError, setPrefsError] = useState("");
 
+  const [allEvents, setAllEvents] = useState([]);
   const [events, setEvents] = useState([]);
+
   const [loadingEvents, setLoadingEvents] = useState(true);
   const [eventsError, setEventsError] = useState("");
 
@@ -65,8 +68,14 @@ export default function HostEvents({ onEditEvent }) {
 
   // dropdown filter state
   const [categoryFilter, setCategoryFilter] = useState("any");
-  const [dateFilter, setDateFilter] = useState("any"); // any | upcoming | expired
-  const [areaFilter, setAreaFilter] = useState("any");
+
+  // Date = dropdown mode + calendar value
+  const [dateMode, setDateMode] = useState("any"); // any | upcoming | expired | on
+  const [selectedDate, setSelectedDate] = useState(""); // "YYYY-MM-DD"
+  
+  // Area = UK-style text search (postcode/city/area)
+  const [areaQuery, setAreaQuery] = useState("");
+  
 
   const [favIds, setFavIds] = useState(() => new Set());
   const [favLoading, setFavLoading] = useState(false);
@@ -74,6 +83,69 @@ export default function HostEvents({ onEditEvent }) {
   const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "";
 
 
+  function isExpiredEvent(e) {
+    // If backend already sends it, trust it
+    if (typeof e?.expired === "boolean") return e.expired;
+  
+    // Otherwise compute from eventDate + eventTime if available
+    const d = e?.eventDate ? new Date(e.eventDate) : null;
+    if (!d || Number.isNaN(d.getTime())) return false;
+  
+    // If time exists, apply it
+    if (e?.eventTime && /^\d{2}:\d{2}(:\d{2})?$/.test(e.eventTime)) {
+      const [hh, mm] = String(e.eventTime).split(":");
+      d.setHours(Number(hh || 0), Number(mm || 0), 0, 0);
+    } else {
+      // if no time, treat as end of day
+      d.setHours(23, 59, 59, 999);
+    }
+  
+    return d.getTime() < Date.now();
+  }
+  
+  // UK “property platform-ish” match:
+  // - supports full postcode: "SW1A 1AA"
+  // - outward code: "SW1A", "E1", "EC1A"
+  // - postcode area: "SW", "E", "EC"
+  // - also matches city/area/venue strings
+  function ukAreaMatch(query, e) {
+    const q = norm(query).replace(/\s+/g, " ").trim();
+    if (!q) return true;
+  
+    const eventArea = norm(e?.area);
+    const eventCity = norm(e?.city);
+    const eventVenue = norm(e?.venue);
+  
+    const rawPostcode =
+      e?.postcode || e?.post_code || e?.postCode || e?.postal_code || e?.postalCode || "";
+    const pc = String(rawPostcode || "").toUpperCase().replace(/\s+/g, "");
+  
+    const qUp = q.toUpperCase().replace(/\s+/g, "");
+  
+    // If event has postcode, do postcode-style matching
+    if (pc) {
+      // full prefix match
+      if (pc.startsWith(qUp)) return true;
+  
+      // outward code (letters+digits up to 4) match
+      const outward = pc.replace(/^([A-Z]{1,2}\d[A-Z\d]?).*$/, "$1");
+      if (outward && outward === qUp) return true;
+  
+      // postcode area (leading letters) match
+      const area = pc.replace(/^([A-Z]{1,2}).*$/, "$1");
+      if (area && area === qUp) return true;
+    }
+  
+    // fallback: match typed text in area/city/venue/title
+    return (
+      eventArea.includes(q) ||
+      eventCity.includes(q) ||
+      eventVenue.includes(q) ||
+      norm(e?.title).includes(q)
+    );
+  }
+
+  
   function toImageSrc(url) {
     if (!url) return "";
     if (url.startsWith("http")) return url;
@@ -173,20 +245,21 @@ try {
         const all = Array.isArray(data.events) ? data.events : [];
 
         if (!alive) return;
-
+        
+        setAllEvents(all);
+        
         if (tab === "my") {
-          // If we don't know who we are yet, show nothing (or show all if you prefer)
           const myId = Number(me?.id);
           if (!myId) {
             setEvents([]);
             return;
           }
-
           const mine = all.filter((e) => Number(getHostIdFromEvent(e)) === myId);
           setEvents(mine);
         } else {
           setEvents(all);
-        }
+        }        
+
       } catch (e) {
         if (!alive) return;
         setEventsError(e.message || "Failed to load events");
@@ -204,49 +277,39 @@ try {
 
   const categoryOptions = useMemo(() => {
     const cats = new Set();
-    events.forEach((e) => (e.categories || []).forEach((c) => cats.add(String(c))));
+    (allEvents || []).forEach((e) => (e.categories || []).forEach((c) => cats.add(String(c))));
     return [
       { value: "any", label: "Any" },
       ...Array.from(cats)
         .sort((a, b) => a.localeCompare(b))
         .map((c) => ({ value: c, label: c })),
     ];
-  }, [events]);
-
-  const areaOptions = useMemo(() => {
-    const areas = new Set();
-    events.forEach((e) => {
-      if (e.area) areas.add(String(e.area));
-    });
-    return [
-      { value: "any", label: "Any" },
-      ...Array.from(areas)
-        .sort((a, b) => a.localeCompare(b))
-        .map((a) => ({ value: a, label: a })),
-    ];
-  }, [events]);
+  }, [allEvents]);  
 
   const dateOptions = useMemo(
     () => [
       { value: "any", label: "Any" },
       { value: "upcoming", label: "Upcoming" },
       { value: "expired", label: "Expired" },
+      { value: "on", label: "On date…" },
     ],
     []
   );
 
-  const passFilters = (e) => {
-    if (categoryFilter !== "any") {
-      const ok = (e.categories || []).some((c) => norm(c) === norm(categoryFilter));
-      if (!ok) return false;
+  const passDate = (e) => {
+    const expired = isExpiredEvent(e);
+  
+    if (dateMode === "upcoming" && expired) return false;
+    if (dateMode === "expired" && !expired) return false;
+  
+    if (dateMode === "on" && selectedDate) {
+      const d = e?.eventDate ? String(e.eventDate).slice(0, 10) : "";
+      if (d !== selectedDate) return false;
     }
-    if (areaFilter !== "any") {
-      if (norm(e.area) !== norm(areaFilter)) return false;
-    }
-    if (dateFilter === "upcoming" && e.expired) return false;
-    if (dateFilter === "expired" && !e.expired) return false;
+  
     return true;
   };
+  
 
   const matchesSearch = (e, qq) =>
     !qq ||
@@ -255,10 +318,29 @@ try {
     norm(e.city).includes(qq) ||
     (e.categories || []).some((c) => norm(c).includes(qq));
 
-  const shown = useMemo(() => {
-    const qq = norm(q);
-    return (events || []).filter((e) => matchesSearch(e, qq) && passFilters(e));
-  }, [events, q, categoryFilter, areaFilter, dateFilter]);
+    const shown = useMemo(() => {
+      const qq = norm(q);
+    
+      return (events || []).filter((e) => {
+        // search box
+        if (qq && !matchesSearch(e, qq)) return false;
+    
+        // category
+        if (categoryFilter !== "any") {
+          const ok = (e.categories || []).some((c) => norm(c) === norm(categoryFilter));
+          if (!ok) return false;
+        }
+    
+        // area (UK-style)
+        if (!ukAreaMatch(areaQuery, e)) return false;
+    
+        // date
+        if (!passDate(e)) return false;
+    
+        return true;
+      });
+    }, [events, q, categoryFilter, areaQuery, dateMode, selectedDate]);
+    
 
   const handleSaveNewEvent = async (formData) => {
     const res = await fetch("/api/events", {
@@ -340,20 +422,45 @@ const toggleFav = async (eventId) => {
         </div>
 
         <div style={styles.filtersRow}>
-          <FilterDropdown
-            label="Categories"
-            value={categoryFilter}
-            options={categoryOptions}
-            onChange={setCategoryFilter}
-            subtitle={
-              myInterests.length
-                ? myInterests.slice(0, 3).join(", ") + (myInterests.length > 3 ? "…" : "")
-                : "Any"
-            }
-          />
-          <FilterDropdown label="Dates" value={dateFilter} options={dateOptions} onChange={setDateFilter} />
-          <FilterDropdown label="Area" value={areaFilter} options={areaOptions} onChange={setAreaFilter} align="right" />
-        </div>
+  <FilterDropdown
+    label="Categories"
+    value={categoryFilter}
+    options={categoryOptions}
+    onChange={setCategoryFilter}
+    subtitle={
+      myInterests.length
+        ? myInterests.slice(0, 3).join(", ") + (myInterests.length > 3 ? "…" : "")
+        : "Any"
+    }
+  />
+
+  <div style={{ display: "grid", gap: 6 }}>
+    <FilterDropdown label="Dates" value={dateMode} options={dateOptions} onChange={(v) => {
+      setDateMode(v);
+      if (v !== "on") setSelectedDate("");
+    }} />
+
+    {dateMode === "on" ? (
+      <input
+        type="date"
+        value={selectedDate}
+        onChange={(e) => setSelectedDate(e.target.value)}
+        style={styles.dateInput}
+      />
+    ) : null}
+  </div>
+
+  <div style={{ display: "grid", gap: 6 }}>
+    <div style={styles.areaLabel}>Area</div>
+    <input
+      value={areaQuery}
+      onChange={(e) => setAreaQuery(e.target.value)}
+      placeholder='e.g. "E1", "SW1A 1AA", "Shoreditch"'
+      style={styles.areaInput}
+    />
+  </div>
+</div>
+
 
         <div style={styles.tabsRow}>
           <button
@@ -480,10 +587,11 @@ const toggleFav = async (eventId) => {
 
           <div style={styles.cardBottom}>
             <div>
-              {e.expired ? <div style={styles.expired}>Expired</div> : null}
+            {isExpiredEvent(e) ? <div style={styles.expired}>Expired</div> : null}
               <div style={styles.eventTitle}>{e.title}</div>
 
 {/*date, time */}
+{/* date + time */}
 {(e.eventDate || e.eventTime) ? (
   <div style={styles.eventDateTime}>
     {toDateText(e.eventDate)}
@@ -492,20 +600,22 @@ const toggleFav = async (eventId) => {
   </div>
 ) : null}
 
-<div style={styles.eventMeta}>
-  {e.venue ? `${e.venue}, ` : ""}
-  {e.city}
-</div>
+{/* location (full address / postcode) */}
+{e.locationText ? (
+  <div style={styles.eventMeta}>{e.locationText}</div>
+) : null}
+
+{/* optional venue/city labels if you still want them */}
+{(e.venue || e.city) ? (
+  <div style={styles.eventMeta}>
+    {e.venue ? `${e.venue}${e.city ? ", " : ""}` : ""}
+    {e.city || ""}
+  </div>
+) : null}
 
 {e.dateLabel ? <div style={styles.eventMeta}>{e.dateLabel}</div> : null}
 {e.timeLabel ? <div style={styles.eventMeta}>{e.timeLabel}</div> : null}
 
-              <div style={styles.eventMeta}>
-                {e.venue ? `${e.venue}, ` : ""}
-                {e.city}
-              </div>
-              <div style={styles.eventMeta}>{e.dateLabel}</div>
-              <div style={styles.eventMeta}>{e.timeLabel}</div>
             </div>
 
             <div style={styles.eventDesc}>{e.description}</div>
@@ -520,12 +630,8 @@ const toggleFav = async (eventId) => {
   ) : null}
 </div>
 
+<BottomMenu screen={screen} setScreen={setScreen} isHost={isHost} />
 
-        <div style={styles.bottomNav}>
-          <div style={{ ...styles.navIcon, color: "#F200FF" }}>⌂</div>
-          <div style={styles.navIcon}>♡</div>
-          <div style={styles.navIcon}>👤</div>
-        </div>
       </div>
     </div>
   );
@@ -653,18 +759,6 @@ const styles = {
   eventMeta: { opacity: 0.65, fontSize: 12, lineHeight: 1.4 },
   eventDesc: { opacity: 0.75, fontSize: 12, lineHeight: 1.5, textAlign: "right" },
   empty: { marginTop: 16, opacity: 0.7, textAlign: "center" },
-  bottomNav: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 58,
-    borderTop: "1px solid rgba(255,255,255,0.08)",
-    background: "rgba(0,0,0,0.85)",
-    display: "flex",
-    justifyContent: "space-around",
-    alignItems: "center",
-  },
   navIcon: { fontSize: 22, opacity: 0.9 },
   accessBtn: {
     background: "transparent",
@@ -711,4 +805,28 @@ const styles = {
     lineHeight: 1,
     opacity: 0.95,
   },
+  dateInput: {
+    height: 36,
+    borderRadius: 10,
+    border: "1px solid rgba(255,255,255,0.15)",
+    background: "rgba(255,255,255,0.08)",
+    color: "white",
+    padding: "0 10px",
+    outline: "none",
+    boxSizing: "border-box",
+  },
+  areaLabel: { fontSize: 12, opacity: 0.75 },
+  areaInput: {
+    width: "100%",
+    height: 44,
+    borderRadius: 22,
+    border: "1px solid rgba(255,255,255,0.08)",
+    background: "rgba(255,255,255,0.08)",
+    outline: "none",
+    padding: "0 16px",
+    fontSize: 14,
+    color: "white",
+    boxSizing: "border-box",
+  },
+  
 };

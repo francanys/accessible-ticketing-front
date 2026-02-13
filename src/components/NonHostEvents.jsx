@@ -1,12 +1,49 @@
 import { useEffect, useMemo, useState } from "react";
 import FilterDropdown from "./FilterDropdown";
 import { FaWheelchair } from "react-icons/fa";
+import BottomMenu from "./BottomNav";
 
 function norm(s) {
   return String(s || "").trim().toLowerCase();
 }
 
-export default function NonHostEvents() {
+function toDateText(v) {
+  if (!v) return "";
+  const d = new Date(v);
+  if (!Number.isNaN(d.getTime())) {
+    return d.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" });
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+    const [yyyy, mm, dd] = v.split("-");
+    return `${dd}/${mm}/${yyyy}`;
+  }
+  return String(v);
+}
+
+function toTimeText(v) {
+  if (!v) return "";
+  if (/^\d{2}:\d{2}:\d{2}$/.test(v)) return v.slice(0, 5);
+  return String(v);
+}
+
+function isExpiredEvent(e) {
+  if (typeof e?.expired === "boolean") return e.expired;
+
+  const d = e?.eventDate ? new Date(e.eventDate) : null;
+  if (!d || Number.isNaN(d.getTime())) return false;
+
+  if (e?.eventTime && /^\d{2}:\d{2}(:\d{2})?$/.test(e.eventTime)) {
+    const [hh, mm] = String(e.eventTime).split(":");
+    d.setHours(Number(hh || 0), Number(mm || 0), 0, 0);
+  } else {
+    d.setHours(23, 59, 59, 999);
+  }
+
+  return d.getTime() < Date.now();
+}
+
+
+export default function NonHostEvents({ screen, setScreen, isHost, mode = "feed" }) {
   const [q, setQ] = useState("");
 
   const [myInterests, setMyInterests] = useState([]);
@@ -16,9 +53,14 @@ export default function NonHostEvents() {
   const [prefsError, setPrefsError] = useState("");
 
   const [categoryFilter, setCategoryFilter] = useState("any");
-  const [dateFilter, setDateFilter] = useState("any"); 
-  const [areaFilter, setAreaFilter] = useState("any");
 
+  const [dateMode, setDateMode] = useState("any"); // any | upcoming | expired | on
+  const [selectedDate, setSelectedDate] = useState(""); // YYYY-MM-DD
+  
+  const [areaQuery, setAreaQuery] = useState("");
+  
+
+  const [allEvents, setAllEvents] = useState([]);
   const [events, setEvents] = useState([]);
   const [loadingEvents, setLoadingEvents] = useState(true);
   const [eventsError, setEventsError] = useState("");
@@ -106,8 +148,12 @@ export default function NonHostEvents() {
         const params = new URLSearchParams();
         if (q?.trim()) params.set("q", q.trim());
         params.set("category", categoryFilter || "any");
-        params.set("area", areaFilter || "any");
-        params.set("date", dateFilter || "any");
+        params.set("area", areaQuery?.trim() || "any");
+        
+        // send dateMode + selectedDate (backend may ignore if not supported)
+        params.set("date", dateMode || "any");
+        if (dateMode === "on" && selectedDate) params.set("onDate", selectedDate);
+        
         params.set("limit", "200");
 
         const res = await fetch(`/api/events/feed?${params.toString()}`, {
@@ -117,7 +163,10 @@ export default function NonHostEvents() {
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.ok) throw new Error(data.error || "Failed to load feed");
 
-        setEvents(Array.isArray(data.events) ? data.events : []);
+        const list = Array.isArray(data.events) ? data.events : [];
+        setEvents(list);
+        setAllEvents((prev) => (prev.length ? prev : list)); // keep initial full set if you want stable options
+
       } catch (e) {
         setEventsError(e.message || "Failed to load feed");
         setEvents([]);
@@ -127,18 +176,32 @@ export default function NonHostEvents() {
     }, 250);
 
     return () => clearTimeout(t);
-  }, [q, categoryFilter, areaFilter, dateFilter]);
+  }, [q, categoryFilter, areaQuery, dateMode, selectedDate]);
 
   const categoryOptions = useMemo(() => {
     const cats = new Set();
-    events.forEach((e) => (e.categories || []).forEach((c) => cats.add(String(c))));
+  
+    (allEvents || []).forEach((e) => {
+      const list = Array.isArray(e.categories)
+        ? e.categories
+        : typeof e.categories === "string"
+        ? [e.categories]
+        : [];
+  
+      list.forEach((c) => {
+        if (c) cats.add(String(c));
+      });
+    });
+  
     return [
       { value: "any", label: "Any" },
       ...Array.from(cats)
         .sort((a, b) => a.localeCompare(b))
         .map((c) => ({ value: c, label: c })),
     ];
-  }, [events]);
+  }, [allEvents]);
+  
+  
 
   const areaOptions = useMemo(() => {
     const areas = new Set();
@@ -158,12 +221,18 @@ export default function NonHostEvents() {
       { value: "any", label: "Any" },
       { value: "upcoming", label: "Upcoming" },
       { value: "expired", label: "Expired" },
+      { value: "on", label: "On date…" },
     ],
     []
   );
+  
 
   //backend already filters + orders by matchScore
-  const shown = events;
+  const shown = useMemo(() => {
+    if (mode !== "favourites") return events;
+    return (events || []).filter((e) => favIds.has(Number(e.id)));
+  }, [events, favIds, mode]);
+  
 
   //state for accessibility
   const [accessTip, setAccessTip] = useState({
@@ -229,22 +298,49 @@ export default function NonHostEvents() {
         </div>
 
         <div style={styles.filtersRow}>
-          <FilterDropdown
-            label="Categories"
-            value={categoryFilter}
-            options={categoryOptions}
-            onChange={setCategoryFilter}
-            subtitle={
-              myInterests.length
-                ? myInterests.slice(0, 3).join(", ") + (myInterests.length > 3 ? "…" : "")
-                : categoryOptions.find((o) => o.value === categoryFilter)?.label
-            }
-          />
+  <FilterDropdown
+    label="Categories"
+    value={categoryFilter}
+    options={categoryOptions}
+    onChange={setCategoryFilter}
+    subtitle={
+      myInterests.length
+        ? myInterests.slice(0, 3).join(", ") + (myInterests.length > 3 ? "…" : "")
+        : categoryOptions.find((o) => o.value === categoryFilter)?.label
+    }
+  />
 
-          <FilterDropdown label="Dates" value={dateFilter} options={dateOptions} onChange={setDateFilter} />
+  <div style={{ display: "grid", gap: 6 }}>
+    <FilterDropdown
+      label="Dates"
+      value={dateMode}
+      options={dateOptions}
+      onChange={(v) => {
+        setDateMode(v);
+        if (v !== "on") setSelectedDate("");
+      }}
+    />
+    {dateMode === "on" ? (
+      <input
+        type="date"
+        value={selectedDate}
+        onChange={(e) => setSelectedDate(e.target.value)}
+        style={styles.dateInput}
+      />
+    ) : null}
+  </div>
 
-          <FilterDropdown label="Area" value={areaFilter} options={areaOptions} onChange={setAreaFilter} align="right" />
-        </div>
+  <div style={{ display: "grid", gap: 6 }}>
+    <div style={styles.areaLabel}>Area</div>
+    <input
+      value={areaQuery}
+      onChange={(e) => setAreaQuery(e.target.value)}
+      placeholder='e.g. "E1", "SW1A 1AA", "Shoreditch"'
+      style={styles.areaInput}
+    />
+  </div>
+</div>
+
 
         {loadingPrefs ? <div style={styles.empty}>Loading your preferences…</div> : null}
         {prefsError ? <div style={{ ...styles.empty, color: "#ff7ad9" }}>{prefsError}</div> : null}
@@ -307,14 +403,32 @@ export default function NonHostEvents() {
 
                 <div style={styles.cardBottom}>
                   <div>
-                    {e.expired ? <div style={styles.expired}>Expired</div> : null}
+                    {isExpiredEvent(e) ? <div style={styles.expired}>Expired</div> : null}
+
                     <div style={styles.eventTitle}>{e.title}</div>
-                    <div style={styles.eventMeta}>
-                      {e.venue ? `${e.venue}, ` : ""}
-                      {e.city}
-                    </div>
-                    <div style={styles.eventMeta}>{e.dateLabel}</div>
-                    <div style={styles.eventMeta}>{e.timeLabel}</div>
+{/* date + time */}
+{(e.eventDate || e.eventTime) ? (
+  <div style={styles.eventDateTime}>
+    {toDateText(e.eventDate)}
+    {e.eventDate && e.eventTime ? " • " : ""}
+    {toTimeText(e.eventTime)}
+  </div>
+) : null}
+
+{/* location under date/time */}
+{e.locationText ? <div style={styles.eventMeta}>{e.locationText}</div> : null}
+
+{/* optional venue/city if you still want it */}
+{(e.venue || e.city) ? (
+  <div style={styles.eventMeta}>
+    {e.venue ? `${e.venue}${e.city ? ", " : ""}` : ""}
+    {e.city || ""}
+  </div>
+) : null}
+
+{e.dateLabel ? <div style={styles.eventMeta}>{e.dateLabel}</div> : null}
+{e.timeLabel ? <div style={styles.eventMeta}>{e.timeLabel}</div> : null}
+
                   </div>
 
                   <div style={styles.eventDesc}>
@@ -338,11 +452,8 @@ export default function NonHostEvents() {
           ) : null}
         </div>
 
-        <div style={styles.bottomNav}>
-          <div style={{ ...styles.navIcon, color: "#F200FF" }}>⌂</div>
-          <div style={styles.navIcon}>♡</div>
-          <div style={styles.navIcon}>👤</div>
-        </div>
+        <BottomMenu screen={screen} setScreen={setScreen} isHost={isHost} />
+
       </div>
     </div>
   );
@@ -452,18 +563,6 @@ const styles = {
   eventMeta: { opacity: 0.65, fontSize: 12, lineHeight: 1.4 },
   eventDesc: { opacity: 0.75, fontSize: 12, lineHeight: 1.5, textAlign: "right" },
   empty: { marginTop: 16, opacity: 0.7, textAlign: "center" },
-  bottomNav: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 58,
-    borderTop: "1px solid rgba(255,255,255,0.08)",
-    background: "rgba(0,0,0,0.85)",
-    display: "flex",
-    justifyContent: "space-around",
-    alignItems: "center",
-  },
   navIcon: { fontSize: 22, opacity: 0.9 },
   accessBtn: {
     background: "transparent",
@@ -502,6 +601,35 @@ const styles = {
     fontSize: 18,
     lineHeight: 1,
     opacity: 0.95,
+  },
+  dateInput: {
+    height: 36,
+    borderRadius: 10,
+    border: "1px solid rgba(255,255,255,0.15)",
+    background: "rgba(255,255,255,0.08)",
+    color: "white",
+    padding: "0 10px",
+    outline: "none",
+    boxSizing: "border-box",
+  },
+  areaLabel: { fontSize: 12, opacity: 0.75 },
+  areaInput: {
+    width: "100%",
+    height: 44,
+    borderRadius: 22,
+    border: "1px solid rgba(255,255,255,0.08)",
+    background: "rgba(255,255,255,0.08)",
+    outline: "none",
+    padding: "0 16px",
+    fontSize: 14,
+    color: "white",
+    boxSizing: "border-box",
+  },
+  eventDateTime: {
+    opacity: 0.85,
+    fontSize: 13,
+    lineHeight: 1.3,
+    marginBottom: 6,
   },
   
 };

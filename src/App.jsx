@@ -9,6 +9,8 @@ import Accessibility from "./components/Accessibility";
 import HostEvents from "./components/HostEvents";
 import NonHostEvents from "./components/NonHostEvents";
 import EditEventPage from "./components/EditEventPage";
+import ProfilePage from "./components/ProfilePage";
+import FavouritesPage from "./components/FavouritesPage";
 
 function getInitialScreen() {
   return "boot";
@@ -20,6 +22,9 @@ export default function App() {
 
   const [editEventId, setEditEventId] = useState(null);
 
+  const [isHostUser, setIsHostUser] = useState(false);
+
+
   useEffect(() => {
     if (screen !== "boot") return;
 
@@ -28,6 +33,8 @@ export default function App() {
         const meData = await meRequest();
         const userId = String(meData.user.id);
         const isHost = !!meData.user.isHost;
+
+        setIsHostUser(isHost);
 
         const iRes = await fetch(`/api/interests?userId=${userId}`, {
           credentials: "include",
@@ -74,9 +81,33 @@ export default function App() {
     );
   }
 
+  if (screen === "favourites") {
+    return (
+      <FavouritesPage
+        screen={screen}
+        setScreen={setScreen}
+        isHost={isHostUser}
+      />
+    );
+  }
+
+  if (screen === "profile") {
+    return (
+      <ProfilePage
+        screen={screen}
+        setScreen={setScreen}
+        isHost={isHostUser}
+      />
+    );
+  }
+
+
   if (screen === "hostEvents") {
     return (
       <HostEvents
+        screen={screen}
+        setScreen={setScreen}
+        isHost={isHostUser}
         onEditEvent={(id) => {
           setEditEventId(id);
           setScreen("editEvent");
@@ -92,7 +123,8 @@ export default function App() {
     return <Accessibility onDone={() => setScreen("nonHostEvents")} />;
 
   if (screen === "nonHostEvents")
-    return <NonHostEvents />;
+  return <NonHostEvents screen={screen} setScreen={setScreen} isHost={isHostUser} />;
+
 
   return (
     <Login
