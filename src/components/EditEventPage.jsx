@@ -12,6 +12,21 @@ const ACCESS_OPTIONS = [
   "None",
 ];
 
+const INTEREST_OPTIONS = [
+  "Music",
+  "Concerts",
+  "Art",
+  "Fashion",
+  "Film",
+  "Theatre",
+  "Comedy",
+  "Sports",
+  "Food",
+  "Tech",
+  "Dance",
+  "Wellness",
+];
+
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "";
 
 function toImageSrc(url) {
@@ -66,6 +81,9 @@ export default function EditEventPage({ eventId, onDone }) {
   const [photos, setPhotos] = useState([]); // new File[]
   const [photoPreviews, setPhotoPreviews] = useState([]); // object URLs
 
+  const [categories, setCategories] = useState([]);
+  const [ticketTiers, setTicketTiers] = useState([]);
+
   // load event
   useEffect(() => {
     let alive = true;
@@ -83,9 +101,28 @@ export default function EditEventPage({ eventId, onDone }) {
         const e = data.event;
         setExisting(e);
 
+        const tiers = Array.isArray(e.ticketTiers) ? e.ticketTiers : [];
+setTicketTiers(
+  tiers.map((t) => {
+    const tierName = String(t.ticket_type || t.tier_name || "").toLowerCase();
+    const pricePence = Number(t.price_pence || 0);
+    const price = (pricePence / 100).toFixed(2);
+    const qtyTotal = Number(t.quantity_total || 0);
+
+    return {
+      tier_name: tierName,
+      isFree: pricePence === 0,
+      price: pricePence === 0 ? "" : price,
+      quantity_total: qtyTotal,
+    };
+  })
+);
+
         setTitle(e.title || "");
         setDescription(e.description || "");
         setAccessibility(Array.isArray(e.accessibility) ? e.accessibility : []);
+
+        setCategories(Array.isArray(e.categories) ? e.categories : []);
 
         //date/time from backend
         setEventDate(toDateInput(e.eventDate));
@@ -141,6 +178,13 @@ export default function EditEventPage({ eventId, onDone }) {
     });
   };
 
+  const toggleCategory = (label) => {
+    setCategories((prev) => {
+      const cur = prev || [];
+      return cur.includes(label) ? cur.filter((x) => x !== label) : [...cur, label];
+    });
+  };
+  
   // ✅ location search (same logic as AddEventModal)
   const fetchLocations = async (q) => {
     const query = norm(q);
@@ -205,8 +249,52 @@ export default function EditEventPage({ eventId, onDone }) {
     if (!norm(location)) return "Location is required.";
     if (!norm(eventDate)) return "Date is required.";
     if (!norm(eventTime)) return "Time is required.";
+    if (!(categories || []).length) return "Pick at least one interest.";
+
+    // ticket validation
+if (!(ticketTiers || []).length) return "Add at least one ticket type.";
+
+for (const t of ticketTiers) {
+  const name = String(t.tier_name || "").toLowerCase();
+  if (!["normal", "vip", "vvip"].includes(name)) return "Invalid ticket type.";
+
+  const qty = Number(t.quantity_total);
+  if (!Number.isFinite(qty) || qty < 0) return "Ticket quantity must be 0 or more.";
+
+  if (!t.isFree) {
+    const p = parseMoneyToFloat(t.price);
+    if (!Number.isFinite(p) || p < 0) return "Ticket price must be 0 or more.";
+  }
+}
+
     return "";
   };
+
+
+  function parseMoneyToFloat(input) {
+    const raw = String(input ?? "").trim();
+    if (!raw) return NaN;
+    const cleaned = raw.replace(/[^0-9.]/g, ""); // removes £ and anything else
+    return Number(cleaned);
+  }
+  
+  function toTicketTiersPayload(ticketTiers) {
+    return (ticketTiers || []).map((t) => {
+      const tierName = String(t.tier_name || "").toLowerCase();
+      const qtyTotal = Number(t.quantity_total) || 0;
+  
+      const p = t.isFree ? 0 : parseMoneyToFloat(t.price);
+      const pricePence = Number.isFinite(p) ? Math.round(p * 100) : NaN;
+  
+      return {
+        tier_name: tierName,         // ✅ backend table uses tier_name
+        price_pence: pricePence,     // integer
+        quantity_total: qtyTotal,    // integer
+      };
+    });
+  }
+  
+
 
   const save = async () => {
     const msg = validate();
@@ -224,11 +312,15 @@ export default function EditEventPage({ eventId, onDone }) {
     fd.append("eventDate", eventDate);
     fd.append("eventTime", eventTime);
 
+    categories.forEach((c) => fd.append("categories[]", c));
+
     //match your backend controller parsing (it supports both)
     accessibility.forEach((a) => fd.append("accessibility[]", a));
 
     //only send photos if user picked new ones
     photos.forEach((p) => fd.append("photos", p));
+
+    fd.append("ticketTiers", JSON.stringify(toTicketTiersPayload(ticketTiers)));
 
     try {
       const res = await fetch(`/api/events/${eventId}`, {
@@ -363,7 +455,34 @@ export default function EditEventPage({ eventId, onDone }) {
           </div>
         </div>
 
-        {/*new location UI */}
+        <div style={styles.section}>
+  <div style={styles.sectionTitle}>Interests</div>
+
+  <div style={styles.accessGrid}>
+    {INTEREST_OPTIONS.map((opt) => {
+      const checked = (categories || []).includes(opt);
+      return (
+        <label key={opt} style={styles.accessItem}>
+          <span
+            style={{ ...styles.checkbox, ...(checked ? styles.checkboxOn : styles.checkboxOff) }}
+            onClick={() => toggleCategory(opt)}
+            role="checkbox"
+            aria-checked={checked}
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") toggleCategory(opt);
+            }}
+          >
+            {checked ? "✓" : ""}
+          </span>
+          <span style={styles.accessLabel}>{opt}</span>
+        </label>
+      );
+    })}
+  </div>
+</div>
+
+        {/*location */}
         <div style={styles.section}>
           <div style={styles.sectionTitle}>Location</div>
 
@@ -397,6 +516,129 @@ export default function EditEventPage({ eventId, onDone }) {
             ) : null}
           </div>
         </div>
+
+
+        <div style={styles.section}>
+  <div style={styles.sectionTitle}>Tickets</div>
+
+  {(ticketTiers || []).map((t, idx) => (
+    <div key={`${t.tier_name}-${idx}`} style={{ display: "grid", gap: 10, marginTop: 10 }}>
+      <select
+        value={t.tier_name}
+        onChange={(e) => {
+          const v = e.target.value;
+          setTicketTiers((prev) => {
+            const next = [...(prev || [])];
+            next[idx] = { ...next[idx], tier_name: v };
+            return next;
+          });
+          setError("");
+        }}
+        style={styles.input}
+      >
+        {/* ✅ prevent selecting duplicates by disabling options already used */}
+        {["normal", "vip", "vvip"].map((opt) => {
+          const usedElsewhere = (ticketTiers || []).some(
+            (x, i) => i !== idx && String(x.tier_name || "").toLowerCase() === opt
+          );
+          return (
+            <option key={opt} value={opt} disabled={usedElsewhere}>
+              {opt.toUpperCase()}
+            </option>
+          );
+        })}
+      </select>
+
+      <label style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 12, opacity: 0.9 }}>
+        <input
+          type="checkbox"
+          checked={!!t.isFree}
+          onChange={(e) => {
+            const checked = e.target.checked;
+            setTicketTiers((prev) => {
+              const next = [...(prev || [])];
+              next[idx] = { ...next[idx], isFree: checked, price: checked ? "" : next[idx].price };
+              return next;
+            });
+            setError("");
+          }}
+        />
+        Free ticket
+      </label>
+
+      {!t.isFree ? (
+        <input
+          value={t.price}
+          onChange={(e) => {
+            const v = e.target.value;
+            setTicketTiers((prev) => {
+              const next = [...(prev || [])];
+              next[idx] = { ...next[idx], price: v };
+              return next;
+            });
+            setError("");
+          }}
+          placeholder="Price (e.g. 12.50)"
+          style={styles.input}
+          inputMode="decimal"
+        />
+      ) : null}
+
+      <input
+        value={String(t.quantity_total ?? "")}
+        onChange={(e) => {
+          const v = e.target.value;
+          setTicketTiers((prev) => {
+            const next = [...(prev || [])];
+            next[idx] = { ...next[idx], quantity_total: v };
+            return next;
+          });
+          setError("");
+        }}
+        placeholder="Tickets available"
+        style={styles.input}
+        inputMode="numeric"
+      />
+
+      <button
+        type="button"
+        onClick={() => {
+          setTicketTiers((prev) => {
+            const cur = prev || [];
+            const next = cur.filter((_, i) => i !== idx);
+            return next.length ? next : [{ tier_name: "normal", isFree: true, price: "", quantity_total: "" }];
+          });
+          setError("");
+        }}
+        style={{ ...styles.saveBtn, width: "100%", height: 40, fontSize: 16 }}
+      >
+        Remove ticket type
+      </button>
+    </div>
+  ))}
+
+  <div style={{ marginTop: 12 }}>
+    <button
+      type="button"
+      onClick={() => {
+        const used = new Set((ticketTiers || []).map((x) => String(x.tier_name || "").toLowerCase()));
+        const all = ["normal", "vip", "vvip"];
+        const nextType = all.find((x) => !used.has(x));
+        if (!nextType) return setError("You already added NORMAL, VIP and VVIP.");
+
+        setTicketTiers((prev) => [
+          ...(prev || []),
+          { tier_name: nextType, isFree: true, price: "", quantity_total: "" },
+        ]);
+        setError("");
+      }}
+      style={{ ...styles.saveBtn, width: "100%", height: 44, fontSize: 16 }}
+    >
+      + Add ticket type
+    </button>
+  </div>
+</div>
+
 
         {error ? <div style={styles.error}>{error}</div> : null}
 

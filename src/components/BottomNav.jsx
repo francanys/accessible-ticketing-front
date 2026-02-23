@@ -1,3 +1,5 @@
+import { FiHome, FiHeart, FiUser } from "react-icons/fi";
+
 export default function BottomMenu({ screen, setScreen, isHost }) {
     const active = (s) => screen === s;
   
@@ -13,7 +15,7 @@ export default function BottomMenu({ screen, setScreen, isHost }) {
           aria-label="Home"
           title="Home"
         >
-          ⌂
+         <FiHome />
         </button>
   
         <button
@@ -23,7 +25,7 @@ export default function BottomMenu({ screen, setScreen, isHost }) {
           aria-label="Favourites"
           title="Favourites"
         >
-          ♡
+         <FiHeart />
         </button>
   
         <button
@@ -33,7 +35,7 @@ export default function BottomMenu({ screen, setScreen, isHost }) {
           aria-label="Profile"
           title="Profile"
         >
-          👤
+         <FiUser />
         </button>
       </div>
     );

@@ -11,6 +11,9 @@ import NonHostEvents from "./components/NonHostEvents";
 import EditEventPage from "./components/EditEventPage";
 import ProfilePage from "./components/ProfilePage";
 import FavouritesPage from "./components/FavouritesPage";
+import EventDetailsScreen from "./components/EventDetailsScreen";
+import CheckoutScreen from "./components/CheckoutScreen";
+
 
 function getInitialScreen() {
   return "boot";
@@ -24,6 +27,10 @@ export default function App() {
 
   const [isHostUser, setIsHostUser] = useState(false);
 
+  const [eventDetailsId, setEventDetailsId] = useState(null);
+
+  const [checkoutEventId, setCheckoutEventId] = useState(null);
+  const [checkoutQtyByTier, setCheckoutQtyByTier] = useState({});
 
   useEffect(() => {
     if (screen !== "boot") return;
@@ -108,6 +115,10 @@ export default function App() {
         screen={screen}
         setScreen={setScreen}
         isHost={isHostUser}
+        onOpenEvent={(id) => {
+          setEventDetailsId(id);
+          setScreen("eventDetails");
+        }}
         onEditEvent={(id) => {
           setEditEventId(id);
           setScreen("editEvent");
@@ -115,6 +126,7 @@ export default function App() {
       />
     );
   }
+  
 
   if (screen === "interests")
     return <Interests onDoneHost={() => setScreen("hostEvents")} />;
@@ -122,10 +134,52 @@ export default function App() {
   if (screen === "accessibility")
     return <Accessibility onDone={() => setScreen("nonHostEvents")} />;
 
-  if (screen === "nonHostEvents")
-  return <NonHostEvents screen={screen} setScreen={setScreen} isHost={isHostUser} />;
+    if (screen === "nonHostEvents")
+    return (
+      <NonHostEvents
+        screen={screen}
+        setScreen={setScreen}
+        isHost={isHostUser}
+        onOpenEvent={(id) => {
+          setEventDetailsId(id);
+          setScreen("eventDetails");
+        }}
+      />
+    );
+  
 
+    if (screen === "eventDetails") {
+      return (
+        <EventDetailsScreen
+          eventId={eventDetailsId}
+          initialQtyByTier={checkoutEventId === eventDetailsId ? checkoutQtyByTier : {}}
+          onBack={() => setScreen(isHostUser ? "hostEvents" : "nonHostEvents")}
+          onCheckout={({ eventId, qtyByTier }) => {
+            setCheckoutEventId(eventId);
+            setCheckoutQtyByTier(qtyByTier || {});
+            setScreen("checkout");
+          }}
+        />
+      );
+    }
 
+    if (screen === "checkout") {
+  return (
+    <CheckoutScreen
+      eventId={checkoutEventId}
+      qtyByTier={checkoutQtyByTier}
+      onBack={() => setScreen("eventDetails")}
+      onDone={() => {
+        // clear cart and go back to the right list
+        setCheckoutEventId(null);
+        setCheckoutQtyByTier({});
+        setScreen(isHostUser ? "hostEvents" : "nonHostEvents");
+      }}
+    />
+  );
+}
+
+  
   return (
     <Login
       onSwitchToRegister={() => setScreen("register")}

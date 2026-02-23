@@ -32,6 +32,22 @@ function norm(s) {
   return String(s || "").trim();
 }
 
+function parseMoneyToNumber(input) {
+  const raw = String(input ?? "").trim();
+  if (!raw) return NaN;
+
+  // Remove currency symbols, spaces, commas. Keep digits + dot.
+  const cleaned = raw.replace(/[^0-9.]/g, "");
+
+  // prevent "12.3.4" -> NaN
+  const parts = cleaned.split(".");
+  const normalized =
+    parts.length <= 2 ? cleaned : `${parts.shift()}.${parts.join("")}`;
+
+  return Number(normalized);
+}
+
+
 export default class AddEventModal extends Component {
   constructor(props) {
     super(props);
@@ -52,7 +68,9 @@ export default class AddEventModal extends Component {
       error: "",
       eventDate: "",
       eventTime: "",
-
+      ticketTiers: [
+        { type: "normal", isFree: true, price: "", quantity: "" },
+      ],
 
     };
   }
@@ -89,6 +107,7 @@ export default class AddEventModal extends Component {
       eventTime: "",
       saving: false,
       error: "",
+      ticketTiers: [{ type: "normal", isFree: true, price: "", quantity: "" }],
     });
   };
 
@@ -154,8 +173,54 @@ export default class AddEventModal extends Component {
   
     const categories = this.state.categories || [];
     if (!categories.length) return "Pick at least one interest.";
+    
+    const ticketErr = this.validateTickets();
+    if (ticketErr) return ticketErr;
+    
+    return "";
+    
+  };
+  
+  validateTickets = () => {
+    const tiers = this.state.ticketTiers || [];
+    if (!tiers.length) return "Add at least one ticket type.";
+  
+    const allowed = new Set(["normal", "vip", "vvip"]);
+  
+    for (const t of tiers) {
+      const type = String(t.type || "").toLowerCase();
+      if (!allowed.has(type)) return "Invalid ticket type.";
+  
+      const qty = Number(t.quantity);
+      if (!Number.isFinite(qty) || qty < 0) return "Ticket quantity must be 0 or more.";
+  
+      if (!t.isFree) {
+        const p = parseMoneyToNumber(t.price);
+        if (!Number.isFinite(p) || p < 0) return "Ticket price must be 0 or more.";
+      }      
+
+    }
+  
+    const total = tiers.reduce((acc, t) => acc + (Number(t.quantity) || 0), 0);
+    if (total <= 0) return "Total tickets must be more than 0.";
+  
+    const types = tiers.map((t) => String(t.type || "").toLowerCase());
+    if (new Set(types).size !== types.length) return "Each ticket type can only be added once.";
   
     return "";
+  };
+  
+  toTicketTiersPayload = () => {
+    return (this.state.ticketTiers || []).map((t) => {
+      const qty = Number(t.quantity) || 0;
+      const priceFloat = t.isFree ? 0 : parseMoneyToNumber(t.price) || 0;
+  
+      return {
+        type: String(t.type || "").toLowerCase(), // normal/vip/vvip
+        price_pence: Math.round(priceFloat * 100),
+        quantity_total: qty,
+      };
+    });
   };
   
 
@@ -176,6 +241,8 @@ export default class AddEventModal extends Component {
     fd.append("locationText", location);
     fd.append("eventDate", this.state.eventDate);
     fd.append("eventTime", this.state.eventTime);
+    fd.append("ticketTiers", JSON.stringify(this.toTicketTiersPayload()));
+
 
     accessibility.forEach((a) => fd.append("accessibility[]", a));
     categories.forEach((c) => fd.append("categories[]", c));
@@ -192,6 +259,7 @@ export default class AddEventModal extends Component {
   
     this.setState({ saving: false });
   };
+
 
   fetchLocations = async (q) => {
     const query = norm(q);
@@ -448,6 +516,151 @@ export default class AddEventModal extends Component {
     ) : null}
   </div>
 </div>
+
+
+{/* tickets */}
+<div style={styles.section}>
+  <div style={styles.sectionTitle}>Tickets</div>
+
+  {(this.state.ticketTiers || []).map((t, idx) => (
+    <div key={`${t.type}-${idx}`} style={{ display: "grid", gap: 10, marginTop: 10 }}>
+<select
+  value={t.type}
+  onChange={(e) => {
+    const v = e.target.value;
+    this.setState((prev) => {
+      const cur = prev.ticketTiers || [];
+
+      // types used by OTHER rows
+      const usedByOthers = new Set(
+        cur
+          .filter((_, i) => i !== idx)
+          .map((x) => String(x.type || "").toLowerCase())
+      );
+
+      // block duplicates
+      if (usedByOthers.has(String(v).toLowerCase())) {
+        return { error: "That ticket type is already added." };
+      }
+
+      const next = [...cur];
+      next[idx] = { ...next[idx], type: v };
+      return { ticketTiers: next, error: "" };
+    });
+  }}
+  style={styles.input}
+>
+  {["normal", "vip", "vvip"].map((opt) => {
+    const usedElsewhere = (this.state.ticketTiers || []).some(
+      (x, i) => i !== idx && String(x.type || "").toLowerCase() === opt
+    );
+
+    return (
+      <option key={opt} value={opt} disabled={usedElsewhere}>
+        {opt.toUpperCase()}
+      </option>
+    );
+  })}
+</select>
+
+
+      <label style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 12, opacity: 0.9 }}>
+        <input
+          type="checkbox"
+          checked={!!t.isFree}
+          onChange={(e) => {
+            const checked = e.target.checked;
+            this.setState((prev) => {
+              const next = [...(prev.ticketTiers || [])];
+              next[idx] = { ...next[idx], isFree: checked, price: checked ? "" : next[idx].price };
+              return { ticketTiers: next, error: "" };
+            });
+          }}
+        />
+        Free ticket
+      </label>
+
+      {!t.isFree ? (
+        <input
+          value={t.price}
+          onChange={(e) => {
+            const v = e.target.value;
+            this.setState((prev) => {
+              const next = [...(prev.ticketTiers || [])];
+              next[idx] = { ...next[idx], price: v };
+              return { ticketTiers: next, error: "" };
+            });
+          }}
+          placeholder="Price (e.g. 12.50)"
+          style={styles.input}
+          inputMode="decimal"
+        />
+      ) : null}
+
+      <input
+        value={t.quantity}
+        onChange={(e) => {
+          const v = e.target.value;
+          this.setState((prev) => {
+            const next = [...(prev.ticketTiers || [])];
+            next[idx] = { ...next[idx], quantity: v };
+            return { ticketTiers: next, error: "" };
+          });
+        }}
+        placeholder="Tickets available"
+        style={styles.input}
+        inputMode="numeric"
+      />
+
+      <button
+        type="button"
+        onClick={() => {
+          this.setState((prev) => {
+            const cur = prev.ticketTiers || [];
+            const next = cur.filter((_, i) => i !== idx);
+            return {
+              ticketTiers: next.length ? next : [{ type: "normal", isFree: true, price: "", quantity: "" }],
+              error: "",
+            };
+          });
+        }}
+        style={{
+          ...styles.saveBtn,
+          width: "100%",
+          height: 40,
+          fontSize: 16,
+          borderColor: "rgba(255,255,255,0.2)",
+        }}
+      >
+        Remove ticket type
+      </button>
+    </div>
+  ))}
+
+  <div style={{ marginTop: 12 }}>
+    <button
+      type="button"
+      onClick={() => {
+        this.setState((prev) => {
+          const cur = prev.ticketTiers || [];
+          const used = new Set(cur.map((x) => String(x.type || "").toLowerCase()));
+          const all = ["normal", "vip", "vvip"];
+          const nextType = all.find((x) => !used.has(x));
+          if (!nextType) return { error: "You already added Normal, VIP and VVIP." };
+
+          return {
+            ticketTiers: [...cur, { type: nextType, isFree: true, price: "", quantity: "" }],
+            error: "",
+          };
+        });
+      }}
+      style={{ ...styles.saveBtn, width: "100%", height: 44, fontSize: 16 }}
+    >
+      + Add ticket type
+    </button>
+  </div>
+</div>
+
 
 
           {/* error */}

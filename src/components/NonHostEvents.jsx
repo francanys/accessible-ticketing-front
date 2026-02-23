@@ -43,7 +43,7 @@ function isExpiredEvent(e) {
 }
 
 
-export default function NonHostEvents({ screen, setScreen, isHost, mode = "feed" }) {
+export default function NonHostEvents({ screen, setScreen, isHost, mode = "feed", onOpenEvent }) {
   const [q, setQ] = useState("");
 
   const [myInterests, setMyInterests] = useState([]);
@@ -54,8 +54,8 @@ export default function NonHostEvents({ screen, setScreen, isHost, mode = "feed"
 
   const [categoryFilter, setCategoryFilter] = useState("any");
 
-  const [dateMode, setDateMode] = useState("any"); // any | upcoming | expired | on
-  const [selectedDate, setSelectedDate] = useState(""); // YYYY-MM-DD
+  const [dateMode, setDateMode] = useState("any"); 
+  const [selectedDate, setSelectedDate] = useState(""); 
   
   const [areaQuery, setAreaQuery] = useState("");
   
@@ -79,8 +79,6 @@ export default function NonHostEvents({ screen, setScreen, isHost, mode = "feed"
     return origin ? `${origin}${path}` : path;
   }
 
-
-  //cookie session auth load preferences without localStorage/token/userId
   useEffect(() => {
     let alive = true;
 
@@ -89,7 +87,6 @@ export default function NonHostEvents({ screen, setScreen, isHost, mode = "feed"
       setPrefsError("");
 
       try {
-        // (optional but useful) confirm logged-in session
         const meRes = await fetch("/api/auth/me", { credentials: "include" });
         const meData = await meRes.json().catch(() => ({}));
         if (!meRes.ok || !meData.ok) throw new Error(meData.error || "Please log in again.");
@@ -134,11 +131,6 @@ export default function NonHostEvents({ screen, setScreen, isHost, mode = "feed"
     };
   }, []);
 
-  /*
-   * cookie session auth:
-   * Call /api/events/feed with credentials include (no bearer header)
-   * Backend should read req.user.userId for personalization
-   */
   useEffect(() => {
     const t = setTimeout(async () => {
       setLoadingEvents(true);
@@ -150,7 +142,6 @@ export default function NonHostEvents({ screen, setScreen, isHost, mode = "feed"
         params.set("category", categoryFilter || "any");
         params.set("area", areaQuery?.trim() || "any");
         
-        // send dateMode + selectedDate (backend may ignore if not supported)
         params.set("date", dateMode || "any");
         if (dateMode === "on" && selectedDate) params.set("onDate", selectedDate);
         
@@ -165,7 +156,7 @@ export default function NonHostEvents({ screen, setScreen, isHost, mode = "feed"
 
         const list = Array.isArray(data.events) ? data.events : [];
         setEvents(list);
-        setAllEvents((prev) => (prev.length ? prev : list)); // keep initial full set if you want stable options
+        setAllEvents((prev) => (prev.length ? prev : list)); 
 
       } catch (e) {
         setEventsError(e.message || "Failed to load feed");
@@ -288,175 +279,199 @@ export default function NonHostEvents({ screen, setScreen, isHost, mode = "feed"
     }
   };
 
+  function formatGBPFromPence(pence) {
+    if (pence == null) return "";
+    const n = Number(pence);
+    if (!Number.isFinite(n)) return "";
+    if (n <= 0) return "Free";
+    return new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(n / 100);
+  }
+  
+  function fromPriceLabel(e) {
+    const p = e?.minPricePence;
+    if (p == null) return "";
+    return `From ${formatGBPFromPence(p)}`;
+  }
   
   return (
     <div style={styles.page}>
       <div style={styles.phone}>
-        <div style={styles.searchWrap}>
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" style={styles.search} />
-          <div style={styles.searchIcon}>⌕</div>
-        </div>
-
-        <div style={styles.filtersRow}>
-  <FilterDropdown
-    label="Categories"
-    value={categoryFilter}
-    options={categoryOptions}
-    onChange={setCategoryFilter}
-    subtitle={
-      myInterests.length
-        ? myInterests.slice(0, 3).join(", ") + (myInterests.length > 3 ? "…" : "")
-        : categoryOptions.find((o) => o.value === categoryFilter)?.label
-    }
-  />
-
-  <div style={{ display: "grid", gap: 6 }}>
-    <FilterDropdown
-      label="Dates"
-      value={dateMode}
-      options={dateOptions}
-      onChange={(v) => {
-        setDateMode(v);
-        if (v !== "on") setSelectedDate("");
-      }}
-    />
-    {dateMode === "on" ? (
-      <input
-        type="date"
-        value={selectedDate}
-        onChange={(e) => setSelectedDate(e.target.value)}
-        style={styles.dateInput}
-      />
-    ) : null}
-  </div>
-
-  <div style={{ display: "grid", gap: 6 }}>
-    <div style={styles.areaLabel}>Area</div>
-    <input
-      value={areaQuery}
-      onChange={(e) => setAreaQuery(e.target.value)}
-      placeholder='e.g. "E1", "SW1A 1AA", "Shoreditch"'
-      style={styles.areaInput}
-    />
-  </div>
-</div>
-
-
-        {loadingPrefs ? <div style={styles.empty}>Loading your preferences…</div> : null}
-        {prefsError ? <div style={{ ...styles.empty, color: "#ff7ad9" }}>{prefsError}</div> : null}
-
-        {loadingEvents ? <div style={styles.empty}>Loading events…</div> : null}
-        {eventsError ? <div style={{ ...styles.empty, color: "#ff7ad9" }}>{eventsError}</div> : null}
-
-        <div style={styles.list}>
-          {shown.map((e) => (
-            <div key={e.id} style={styles.card} onClick={closeAccessTip}>
-              <div style={styles.cardHeaderIcons}>
-              <div style={{ position: "relative" }}>
-<button
-  type="button"
-  title="Accessibility" // ✅ hover label
-  aria-label="Accessibility"
-  onClick={(ev) => {
-    ev.stopPropagation(); // ✅ don’t trigger card click close
-    if (accessTip.open && accessTip.eventId === e.id) closeAccessTip();
-    else openAccessTip(e); // ✅ click shows backend list
-  }}
-  style={styles.accessBtn}
->
-  <FaWheelchair />
-</button>
-
-
-
-  {accessTip.open && accessTip.eventId === e.id ? (
-    <div style={styles.accessTip} role="tooltip">
-      {accessTip.text}
-    </div>
-  ) : null}
-</div>
-<button
-    type="button"
-    title="Favourite"
-    aria-label="Favourite"
-    onClick={(ev) => {
-      ev.stopPropagation();
-      toggleFav(e.id);
-    }}
-    style={{
-      ...styles.heartBtn,
-      color: favIds.has(Number(e.id)) ? "#F200FF" : "rgba(255,255,255,0.55)",
-    }}
-  >
-    ♥
-  </button>
-              </div>
-
-              <div style={styles.cardBody}>
-                <div style={styles.cardImageWrap}>
-                  {e.imageUrl ? (
-                    <img src={toImageSrc(e.imageUrl)}alt={e.title} style={styles.cardImage} />
-                  ) : (
-                    <div style={styles.cardImageFallback}>No photo</div>
-                  )}
-                </div>
-
-                <div style={styles.cardBottom}>
-                  <div>
-                    {isExpiredEvent(e) ? <div style={styles.expired}>Expired</div> : null}
-
-                    <div style={styles.eventTitle}>{e.title}</div>
-{/* date + time */}
-{(e.eventDate || e.eventTime) ? (
-  <div style={styles.eventDateTime}>
-    {toDateText(e.eventDate)}
-    {e.eventDate && e.eventTime ? " • " : ""}
-    {toTimeText(e.eventTime)}
-  </div>
-) : null}
-
-{/* location under date/time */}
-{e.locationText ? <div style={styles.eventMeta}>{e.locationText}</div> : null}
-
-{/* optional venue/city if you still want it */}
-{(e.venue || e.city) ? (
-  <div style={styles.eventMeta}>
-    {e.venue ? `${e.venue}${e.city ? ", " : ""}` : ""}
-    {e.city || ""}
-  </div>
-) : null}
-
-{e.dateLabel ? <div style={styles.eventMeta}>{e.dateLabel}</div> : null}
-{e.timeLabel ? <div style={styles.eventMeta}>{e.timeLabel}</div> : null}
-
-                  </div>
-
-                  <div style={styles.eventDesc}>
-                    {e.description}
-                    {typeof e.matchScore === "number" ? (
-                      <div style={{ marginTop: 10, opacity: 0.8 }}>
-                        Matched: {e.matchScore}{" "}
-                        <span style={{ opacity: 0.75, fontSize: 11 }}>
-                          ({e.interestMatches} interests, {e.accessMatches} access)
-                        </span>
+        <div style={styles.content}>
+          <div style={styles.searchWrap}>
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search"
+              style={styles.search}
+            />
+            <div style={styles.searchIcon}>⌕</div>
+          </div>
+  
+          <div style={styles.filtersRow}>
+            <FilterDropdown
+              label="Categories"
+              value={categoryFilter}
+              options={categoryOptions}
+              onChange={setCategoryFilter}
+              subtitle={
+                myInterests.length
+                  ? myInterests.slice(0, 3).join(", ") + (myInterests.length > 3 ? "…" : "")
+                  : categoryOptions.find((o) => o.value === categoryFilter)?.label
+              }
+            />
+  
+            <div style={{ display: "grid", gap: 6 }}>
+              <FilterDropdown
+                label="Dates"
+                value={dateMode}
+                options={dateOptions}
+                onChange={(v) => {
+                  setDateMode(v);
+                  if (v !== "on") setSelectedDate("");
+                }}
+              />
+              {dateMode === "on" ? (
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  style={styles.dateInput}
+                />
+              ) : null}
+            </div>
+  
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={styles.areaLabel}>Area</div>
+              <input
+                value={areaQuery}
+                onChange={(e) => setAreaQuery(e.target.value)}
+                placeholder='e.g. "E1", "SW1A 1AA", "Shoreditch"'
+                style={styles.areaInput}
+              />
+            </div>
+          </div>
+  
+          {loadingPrefs ? <div style={styles.empty}>Loading your preferences…</div> : null}
+          {prefsError ? <div style={{ ...styles.empty, color: "#ff7ad9" }}>{prefsError}</div> : null}
+  
+          {loadingEvents ? <div style={styles.empty}>Loading events…</div> : null}
+          {eventsError ? <div style={{ ...styles.empty, color: "#ff7ad9" }}>{eventsError}</div> : null}
+  
+          <div style={styles.list}>
+            {shown.map((e) => (
+              <div
+                key={e.id}
+                style={{ ...styles.card, cursor: "pointer" }}
+                onClick={() => {
+                  closeAccessTip();
+                  if (onOpenEvent) onOpenEvent(e.id);
+                }}
+              >
+                <div style={styles.cardHeaderIcons}>
+                  <div style={{ position: "relative" }}>
+                    <button
+                      type="button"
+                      title="Accessibility"
+                      aria-label="Accessibility"
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        if (accessTip.open && accessTip.eventId === e.id) closeAccessTip();
+                        else openAccessTip(e);
+                      }}
+                      style={styles.accessBtn}
+                    >
+                      <FaWheelchair />
+                    </button>
+  
+                    {accessTip.open && accessTip.eventId === e.id ? (
+                      <div style={styles.accessTip} role="tooltip">
+                        {accessTip.text}
                       </div>
                     ) : null}
                   </div>
+  
+                  <button
+                    type="button"
+                    title="Favourite"
+                    aria-label="Favourite"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      toggleFav(e.id);
+                    }}
+                    style={{
+                      ...styles.heartBtn,
+                      color: favIds.has(Number(e.id)) ? "#F200FF" : "rgba(255,255,255,0.55)",
+                    }}
+                  >
+                    ♥
+                  </button>
+                </div>
+  
+                <div style={styles.cardBody}>
+                  <div style={styles.cardImageWrap}>
+                    {e.imageUrl ? (
+                      <img src={toImageSrc(e.imageUrl)} alt={e.title} style={styles.cardImage} />
+                    ) : (
+                      <div style={styles.cardImageFallback}>No photo</div>
+                    )}
+                  </div>
+  
+                  <div style={styles.cardBottom}>
+                    <div>
+                      {isExpiredEvent(e) ? <div style={styles.expired}>Expired</div> : null}
+  
+                      {fromPriceLabel(e) ? (
+                        <div style={{ ...styles.eventMeta, opacity: 0.85 }}>{fromPriceLabel(e)}</div>
+                      ) : null}
+  
+                      {(e.eventDate || e.eventTime) ? (
+                        <div style={styles.eventDateTime}>
+                          {toDateText(e.eventDate)}
+                          {e.eventDate && e.eventTime ? " • " : ""}
+                          {toTimeText(e.eventTime)}
+                        </div>
+                      ) : null}
+  
+                      {e.locationText ? <div style={styles.eventMeta}>{e.locationText}</div> : null}
+  
+                      {(e.venue || e.city) ? (
+                        <div style={styles.eventMeta}>
+                          {e.venue ? `${e.venue}${e.city ? ", " : ""}` : ""}
+                          {e.city || ""}
+                        </div>
+                      ) : null}
+  
+                      {e.dateLabel ? <div style={styles.eventMeta}>{e.dateLabel}</div> : null}
+                      {e.timeLabel ? <div style={styles.eventMeta}>{e.timeLabel}</div> : null}
+                    </div>
+  
+                    <div style={styles.eventDesc}>
+                      {e.description}
+                      {typeof e.matchScore === "number" ? (
+                        <div style={{ marginTop: 10, opacity: 0.8 }}>
+                          Matched: {e.matchScore}{" "}
+                          <span style={{ opacity: 0.75, fontSize: 11 }}>
+                            ({e.interestMatches} interests, {e.accessMatches} access)
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
-
-          {!shown.length && !loadingEvents && !loadingPrefs ? (
-            <div style={styles.empty}>No events match your filters yet.</div>
-          ) : null}
+            ))}
+  
+            {!shown.length && !loadingEvents && !loadingPrefs ? (
+              <div style={styles.empty}>No events match your filters yet.</div>
+            ) : null}
+          </div>
         </div>
-
+  
         <BottomMenu screen={screen} setScreen={setScreen} isHost={isHost} />
-
       </div>
     </div>
   );
+  
 }
 
 const styles = {
@@ -471,13 +486,14 @@ const styles = {
   },
   phone: {
     width: "min(420px, 100%)",
-    minHeight: "92vh",
+    height: "92vh",   
     background: "black",
     borderRadius: 24,
-    overflow: "hidden",
+    overflow: "hidden",  
     position: "relative",
-    padding: "14px 14px 78px",
     boxSizing: "border-box",
+    display: "flex",    
+    flexDirection: "column", 
   },
   searchWrap: { position: "relative", marginTop: 8 },
   search: {
